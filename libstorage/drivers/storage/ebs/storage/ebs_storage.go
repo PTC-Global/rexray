@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"fmt"
 	"hash"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -102,11 +103,19 @@ func (d *driver) Init(context types.Context, config gofig.Config) error {
 		return err
 	}
 
-	useLargeDeviceRange := d.config.GetBool(ebs.ConfigUseLargeDeviceRange)
-	d.deviceRange = ebsUtils.GetDeviceRange(useLargeDeviceRange)
+	useNvmeDeviceRange := d.config.GetBool(ebs.ConfigUseNvmeDeviceRange)
+	if useNvmeDeviceRange {
+		d.deviceRange = ebsUtils.GetNvmeDeviceRange()
+		log.Info("storage driver initialized, using NVME device range: ",
+			useNvmeDeviceRange)
+	} else {
+		useLargeDeviceRange := d.config.GetBool(ebs.ConfigUseLargeDeviceRange)
+		d.deviceRange = ebsUtils.GetDeviceRange(useLargeDeviceRange)
 
-	log.Info("storage driver initialized, using large device range: ",
-		useLargeDeviceRange)
+		log.Info("storage driver initialized, using large device range: ",
+			useLargeDeviceRange)
+	}
+
 	return nil
 }
 
@@ -932,9 +941,14 @@ func (d *driver) toTypesVolume(
 	attachments types.VolumeAttachmentsTypes) ([]*types.Volume, error) {
 
 	var (
-		ld   *types.LocalDevices
-		ldOK bool
+		ld                 *types.LocalDevices
+		ldOK               bool
+		useNvmeDeviceRange bool
 	)
+
+	ns := d.deviceRange
+
+	useNvmeDeviceRange = d.config.GetBool(ebs.ConfigUseNvmeDeviceRange)
 
 	if attachments.Devices() {
 		// Get local devices map from context
@@ -952,16 +966,33 @@ func (d *driver) toTypesVolume(
 			for _, attachment := range volume.Attachments {
 				deviceName := ""
 				if attachments.Devices() {
-					// Compensate for kernel volume mapping i.e. change
-					// "/dev/sda" to "/dev/xvda"
-					deviceName = strings.Replace(
-						*attachment.Device, "sd",
-						d.deviceRange.NextDeviceInfo.Prefix, 1)
+					if useNvmeDeviceRange {
+						// Compensate for kernel & nvme driver volume mapping i.e. change
+						// "/dev/xvdb" to "/dev/nvme1n1"
+						// "/dev/xvdc" to "/dev/nvme2n1"
+						runes := []rune(*attachment.Device)
+						deviceIndex := string(runes[len(runes)-1:])
+
+						for childIndex, childLetter := range ns.ChildLetters {
+							if deviceIndex == childLetter {
+								deviceName = "/dev/nvme" + strconv.Itoa(childIndex) + "n1"
+								break
+							}
+						}
+					} else {
+						// Compensate for kernel volume mapping i.e. change
+						// "/dev/sda" to "/dev/xvda"
+						deviceName = strings.Replace(
+							*attachment.Device, "sd",
+							d.deviceRange.NextDeviceInfo.Prefix, 1)
+					}
+
 					// Keep device name if it is found in local devices
 					if _, ok := ld.DeviceMap[deviceName]; !ok {
 						deviceName = ""
 					}
 				}
+
 				attachmentSD := &types.VolumeAttachment{
 					VolumeID: *attachment.VolumeId,
 					InstanceID: &types.InstanceID{

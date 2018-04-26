@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,9 +48,15 @@ func (d *driver) Init(ctx types.Context, config gofig.Config) error {
 	ebs.BackCompat(config)
 	d.config = config
 	// initialize device range config
-	useLargeDeviceRange := d.config.GetBool(ebs.ConfigUseLargeDeviceRange)
-	log.Debug("executor using large device range: ", useLargeDeviceRange)
-	d.deviceRange = ebsUtils.GetDeviceRange(useLargeDeviceRange)
+	useNvmeDeviceRange := d.config.GetBool(ebs.ConfigUseNvmeDeviceRange)
+	if useNvmeDeviceRange {
+		d.deviceRange = ebsUtils.GetNvmeDeviceRange()
+		log.Debug("executor using NVME device range: ", useNvmeDeviceRange)
+	} else {
+		useLargeDeviceRange := d.config.GetBool(ebs.ConfigUseLargeDeviceRange)
+		log.Debug("executor using large device range: ", useLargeDeviceRange)
+		d.deviceRange = ebsUtils.GetDeviceRange(useLargeDeviceRange)
+	}
 	return nil
 }
 
@@ -80,6 +87,8 @@ var errNoAvaiDevice = goof.New("no available device")
 func (d *driver) NextDevice(
 	ctx types.Context,
 	opts types.Store) (string, error) {
+
+	useNvmeDeviceRange := d.config.GetBool(ebs.ConfigUseNvmeDeviceRange)
 
 	// Find which letters are used for local devices
 	localDeviceNames := make(map[string]bool)
@@ -120,23 +129,49 @@ func (d *driver) NextDevice(
 		}
 	}
 
-	// Find next available letter for device path.
-	// Device namespace is iterated in random order
-	// to mitigate ghost device issues.
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	parentLength := len(ns.ParentLetters)
-	for _, pIndex := range r.Perm(parentLength) {
-		parentSuffix := ""
-		if parentLength > 1 {
-			parentSuffix = ns.ParentLetters[pIndex]
-		}
-		for _, cIndex := range r.Perm(len(ns.ChildLetters)) {
-			suffix := parentSuffix + ns.ChildLetters[cIndex]
-			if localDeviceNames[suffix] {
-				continue
+
+	if useNvmeDeviceRange {
+		// Find next available letter for device path.
+		// Device namespace is iterated in order to have exact mapping:
+		// sda  -> /dev/nvme0n1
+		// xvdb -> /dev/nvme1n1
+		// xbdc -> /dev/nvme2n1
+		// xvdd -> /dev/nvme3n1
+
+		for pIndex := range ns.ParentLetters {
+			parentSuffix := ""
+			if parentLength > 1 {
+				parentSuffix = ns.ParentLetters[pIndex]
 			}
-			return fmt.Sprintf(
-				"/dev/%s%s", ns.NextDeviceInfo.Prefix, suffix), nil
+
+			for childIndex, childLetter := range ns.ChildLetters {
+				suffix := parentSuffix + strconv.Itoa(childIndex)
+				if localDeviceNames[suffix] {
+					continue
+				}
+				return fmt.Sprintf("/dev/xvd%s", childLetter), nil
+			}
+		}
+	} else {
+		// Find next available letter for device path.
+		// Device namespace is iterated in random order
+		// to mitigate ghost device issues.
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		parentLength := len(ns.ParentLetters)
+		for _, pIndex := range r.Perm(parentLength) {
+			parentSuffix := ""
+			if parentLength > 1 {
+				parentSuffix = ns.ParentLetters[pIndex]
+			}
+			for _, cIndex := range r.Perm(len(ns.ChildLetters)) {
+				suffix := parentSuffix + ns.ChildLetters[cIndex]
+				if localDeviceNames[suffix] {
+					continue
+				}
+				return fmt.Sprintf(
+					"/dev/%s%s", ns.NextDeviceInfo.Prefix, suffix), nil
+			}
 		}
 	}
 	return "", errNoAvaiDevice

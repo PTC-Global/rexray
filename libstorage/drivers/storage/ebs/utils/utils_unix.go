@@ -49,6 +49,19 @@ var (
 		},
 		DeviceRE: regexp.MustCompile(`^xvd[f-p]$`),
 	}
+	nvmeDeviceRange = &DeviceRange{
+		ParentLetters: []string{"1"},
+		// For nvme numbers indexes of those characters will be used
+		ChildLetters: []string{
+			"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+			"n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"},
+		NextDeviceInfo: &types.NextDeviceInfo{
+			Prefix:  "xvd",
+			Pattern: "[b-c][a-z]",
+			Ignore:  false,
+		},
+		DeviceRE: regexp.MustCompile(`^nvme([0-9]|1[0-9]|2[0-9])n1$`),
+	}
 )
 
 // GetDeviceRange returns a specified DeviceRange object
@@ -57,4 +70,9 @@ func GetDeviceRange(useLargeDeviceRange bool) *DeviceRange {
 		return largeDeviceRange
 	}
 	return defaultDeviceRange
+}
+
+// GetNvmeDeviceRange returns a specified DeviceRange object
+func GetNvmeDeviceRange() *DeviceRange {
+	return nvmeDeviceRange
 }

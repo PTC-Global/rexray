@@ -71,6 +71,11 @@ const (
 	// Encrypted flag set to true.
 	KmsKeyID = "kmsKeyID"
 
+	// ConfigUseNvmeDeviceRange defines if Rex-RAY should use device mapping
+	// for C5 and M5 instances on which all devices are visible as nvme
+	// Will work only on 5th generation of C & M EC2 instances types
+	ConfigUseNvmeDeviceRange = Name + ".useNvmeDeviceRange"
+
 	// ConfigUseLargeDeviceRange defines if Rex-RAY should use device mapping
 	// recommended by AWS (default), or a larger device ange that is
 	// supported but will not work on all instance types
